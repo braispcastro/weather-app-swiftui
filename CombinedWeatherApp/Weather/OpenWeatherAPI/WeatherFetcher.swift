@@ -29,6 +29,11 @@
 import Foundation
 import Combine
 
+protocol WeatherFetchable {
+  func weeklyWeatherForecast(forCity city: String) -> AnyPublisher<WeeklyForecastResponse, WeatherError>
+  func currentWeatherForecast(forCity city: String) -> AnyPublisher<CurrentWeatherForecastResponse, WeatherError>
+}
+
 class WeatherFetcher {
   private let session: URLSession
   
@@ -43,12 +48,10 @@ private extension WeatherFetcher {
     static let scheme = "https"
     static let host = "api.openweathermap.org"
     static let path = "/data/2.5"
-    static let key = "<your key>"
+    static let key = "5630a4a5538099cd552a7fc86a14f179"
   }
   
-  func makeWeeklyForecastComponents(
-    withCity city: String
-  ) -> URLComponents {
+  func makeWeeklyForecastComponents(withCity city: String) -> URLComponents {
     var components = URLComponents()
     components.scheme = OpenWeatherAPI.scheme
     components.host = OpenWeatherAPI.host
@@ -64,9 +67,7 @@ private extension WeatherFetcher {
     return components
   }
   
-  func makeCurrentDayForecastComponents(
-    withCity city: String
-  ) -> URLComponents {
+  func makeCurrentDayForecastComponents(withCity city: String) -> URLComponents {
     var components = URLComponents()
     components.scheme = OpenWeatherAPI.scheme
     components.host = OpenWeatherAPI.host
@@ -80,5 +81,37 @@ private extension WeatherFetcher {
     ]
     
     return components
+  }
+}
+
+// MARK: - WeatherFetchable
+extension WeatherFetcher: WeatherFetchable {
+  func weeklyWeatherForecast(forCity city: String) -> AnyPublisher<WeeklyForecastResponse, WeatherError> {
+    return forecast(with: makeWeeklyForecastComponents(withCity: city))
+  }
+
+  func currentWeatherForecast(forCity city: String) -> AnyPublisher<CurrentWeatherForecastResponse, WeatherError> {
+    return forecast(with: makeCurrentDayForecastComponents(withCity: city))
+  }
+
+  private func forecast<T>(with components: URLComponents) -> AnyPublisher<T, WeatherError> where T: Decodable {
+    // 1
+    guard let url = components.url else {
+      let error = WeatherError.network(description: "Couldn't create URL")
+      return Fail(error: error).eraseToAnyPublisher()
+    }
+
+    // 2
+    return session.dataTaskPublisher(for: URLRequest(url: url))
+      // 3
+      .mapError { error in
+        .network(description: error.localizedDescription)
+      }
+      // 4
+      .flatMap(maxPublishers: .max(1)) { pair in
+        decode(pair.data)
+      }
+      // 5
+      .eraseToAnyPublisher()
   }
 }
